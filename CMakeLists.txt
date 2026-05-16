@@ -13,7 +13,7 @@ set(IDL_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/AntivirusRPC_c.c)
 
 add_custom_command(
     OUTPUT ${IDL_HEADER} ${IDL_SERVER} ${IDL_CLIENT}
-    COMMAND midl.exe /nologo /env win64 /h ${IDL_HEADER} /sstub ${IDL_SERVER} /cstub ${IDL_CLIENT} /acf ${ACF_FILE} ${IDL_FILE}
+    COMMAND midl.exe /nologo /amd64 /h ${IDL_HEADER} /sstub ${IDL_SERVER} /cstub ${IDL_CLIENT} /acf ${ACF_FILE} ${IDL_FILE}
     DEPENDS ${IDL_FILE} ${ACF_FILE}
 )
 
