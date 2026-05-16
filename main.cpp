@@ -86,15 +86,18 @@ void StopServiceViaRPC() {
     RPC_WSTR szStringBinding = NULL;
     RPC_BINDING_HANDLE hBinding = NULL;
 
-    RpcStringBindingComposeW(NULL, (RPC_WSTR)L"ncalrpc", NULL, (RPC_WSTR)L"AntivirusRpcEndpoint", NULL, &szStringBinding);
-    if (RpcBindingFromStringBindingW(szStringBinding, &hBinding) == RPC_S_OK) {
-        RpcTryExcept {
-            RpcStopAntivirusService(hBinding);
-        } RpcExcept(1) {
-        } RpcEndExcept;
-        RpcBindingFree(&hBinding);
+    if (RpcStringBindingComposeW(NULL, (RPC_WSTR)L"ncalrpc", NULL, (RPC_WSTR)L"AntivirusRpcEndpoint", NULL, &szStringBinding) == RPC_S_OK) {
+        if (RpcBindingFromStringBindingW(szStringBinding, &hBinding) == RPC_S_OK) {
+            // Используем стандартный SEH блок для безопасности вместо макросов
+            __try {
+                RpcStopAntivirusService(hBinding);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                // Сервер недоступен или уже остановлен
+            }
+            RpcBindingFree(&hBinding);
+        }
+        RpcStringFreeW(&szStringBinding);
     }
-    RpcStringFreeW(&szStringBinding);
 }
 
 void AddTrayIcon(HWND hwnd) {
@@ -184,4 +187,33 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 
     HANDLE hMutex = CreateMutex(NULL, TRUE, L"Global\\MyTrayAppMutex_Unique_123");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        CloseHandle(h
+        CloseHandle(hMutex);
+        return 0;
+    }
+
+    g_hInst = hInstance;
+    g_uTaskbarRestart = RegisterWindowMessage(L"TaskbarCreated");
+
+    WNDCLASSEX wcex = { sizeof(WNDCLASSEX), CS_HREDRAW | CS_VREDRAW, WndProc, 0, 0, hInstance, NULL, LoadCursor(nullptr, IDC_ARROW), (HBRUSH)(COLOR_WINDOW + 1), MAKEINTRESOURCE(IDR_MAINMENU), szWindowClass, NULL };
+    RegisterClassEx(&wcex);
+
+    g_hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, 400, 300, nullptr, nullptr, hInstance, nullptr);
+    if (!g_hWnd) return FALSE;
+
+    bool startHidden = (wcsstr(lpCmdLine, L"-hidden") != nullptr || wcsstr(lpCmdLine, L"--hidden") != nullptr);
+    if (!startHidden) {
+        ShowWindow(g_hWnd, nCmdShow);
+        UpdateWindow(g_hWnd);
+    }
+
+    AddTrayIcon(g_hWnd);
+
+    MSG msg;
+    while (GetMessage(&msg, nullptr, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    CloseHandle(hMutex);
+    return (int)msg.wParam;
+}
