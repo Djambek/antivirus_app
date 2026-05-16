@@ -1,0 +1,21 @@
+#include "resource.h"
+#include <windows.h>
+
+// Главное меню окна
+IDR_MAINMENU MENU
+BEGIN
+    POPUP "Файл"
+    BEGIN
+        MENUITEM "Выход", ID_FILE_EXIT
+    END
+END
+
+// Контекстное меню трея
+IDR_TRAYMENU MENU
+BEGIN
+    POPUP "TrayPopup"
+    BEGIN
+        MENUITEM "Открыть", ID_TRAY_OPEN
+        MENUITEM "Выход", ID_TRAY_EXIT
+    END
+END
