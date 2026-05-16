@@ -3,7 +3,13 @@
 #include <wchar.h>
 #include <rpc.h>
 #include "resource.h"
-#include "AntivirusRPC_h.h"
+
+// ВАЖНО: Указываем компилятору C++, что этот заголовок и функции написаны на C
+extern "C" {
+    #include "AntivirusRPC_h.h"
+    void* __RPC_USER MIDL_user_allocate(size_t size) { return malloc(size); }
+    void __RPC_USER MIDL_user_free(void* p) { free(p); }
+}
 
 #pragma comment(lib, "Rpcrt4.lib")
 
@@ -16,9 +22,6 @@ const wchar_t szTitle[] = L"Tray Application";
 const wchar_t szWindowClass[] = L"TrayAppClass";
 const wchar_t SERVICE_NAME[] = L"AntivirusTrayService";
 const wchar_t SERVICE_EXE[] = L"AntivirusService.exe";
-
-void* __RPC_USER MIDL_user_allocate(size_t size) { return malloc(size); }
-void __RPC_USER MIDL_user_free(void* p) { free(p); }
 
 bool StartAntivirusService() {
     SC_HANDLE hSCM = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
@@ -88,11 +91,10 @@ void StopServiceViaRPC() {
 
     if (RpcStringBindingComposeW(NULL, (RPC_WSTR)L"ncalrpc", NULL, (RPC_WSTR)L"AntivirusRpcEndpoint", NULL, &szStringBinding) == RPC_S_OK) {
         if (RpcBindingFromStringBindingW(szStringBinding, &hBinding) == RPC_S_OK) {
-            // Используем стандартный SEH блок для безопасности вместо макросов
             __try {
                 RpcStopAntivirusService(hBinding);
             } __except (EXCEPTION_EXECUTE_HANDLER) {
-                // Сервер недоступен или уже остановлен
+                // Если служба уже не отвечает
             }
             RpcBindingFree(&hBinding);
         }
