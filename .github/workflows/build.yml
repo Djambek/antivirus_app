@@ -5,7 +5,6 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-    # Обновлено до v4
     - uses: actions/checkout@v4
     
     - name: Configure CMake
@@ -14,9 +13,9 @@ jobs:
     - name: Build
       run: cmake --build build --config Release
 
-    - name: Upload Artifact
-      # Обновлено до v4
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: TrayApp-Executable
-        path: build/Release/TrayApp.exe
+        name: Antivirus-Suite-Executables
+        # Забираем все .exe файлы из папки Release
+        path: build/Release/*.exe
