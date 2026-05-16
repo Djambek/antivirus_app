@@ -5,7 +5,8 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v3
+    # Обновлено до v4
+    - uses: actions/checkout@v4
     
     - name: Configure CMake
       run: cmake -B build -S .
@@ -14,7 +15,8 @@ jobs:
       run: cmake --build build --config Release
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v3
+      # Обновлено до v4
+      uses: actions/upload-artifact@v4
       with:
         name: TrayApp-Executable
         path: build/Release/TrayApp.exe
