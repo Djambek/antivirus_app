@@ -1,24 +1,109 @@
 #include <windows.h>
+#include <tlhelp32.h>
 #include <wchar.h>
+#include <rpc.h>
 #include "resource.h"
+#include "AntivirusRPC_h.h"
+
+#pragma comment(lib, "Rpcrt4.lib")
 
 #define WM_APP_TRAYMSG (WM_APP + 1)
 
-// Глобальные переменные
 HINSTANCE g_hInst;
 HWND g_hWnd;
 UINT g_uTaskbarRestart;
 const wchar_t szTitle[] = L"Tray Application";
 const wchar_t szWindowClass[] = L"TrayAppClass";
+const wchar_t SERVICE_NAME[] = L"AntivirusTrayService";
+const wchar_t SERVICE_EXE[] = L"AntivirusService.exe";
 
-// Функции для работы с треем
+void* __RPC_USER MIDL_user_allocate(size_t size) { return malloc(size); }
+void __RPC_USER MIDL_user_free(void* p) { free(p); }
+
+bool StartAntivirusService() {
+    SC_HANDLE hSCM = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+    if (!hSCM) return false;
+
+    SC_HANDLE hService = OpenServiceW(hSCM, SERVICE_NAME, SERVICE_QUERY_STATUS | SERVICE_START);
+    if (!hService) {
+        CloseServiceHandle(hSCM);
+        return false;
+    }
+
+    SERVICE_STATUS_PROCESS ssp;
+    DWORD bytesNeeded;
+    if (QueryServiceStatusEx(hService, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytesNeeded)) {
+        if (ssp.dwCurrentState == SERVICE_STOPPED) {
+            if (StartServiceW(hService, 0, NULL)) {
+                while (QueryServiceStatusEx(hService, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytesNeeded)) {
+                    if (ssp.dwCurrentState == SERVICE_RUNNING) break;
+                    Sleep(500);
+                }
+            }
+            CloseServiceHandle(hService);
+            CloseServiceHandle(hSCM);
+            return true; 
+        }
+    }
+    CloseServiceHandle(hService);
+    CloseServiceHandle(hSCM);
+    return false;
+}
+
+bool IsParentService() {
+    DWORD pid = GetCurrentProcessId();
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap == INVALID_HANDLE_VALUE) return false;
+
+    PROCESSENTRY32W pe = { sizeof(PROCESSENTRY32W) };
+    DWORD parentPid = 0;
+
+    if (Process32FirstW(hSnap, &pe)) {
+        do {
+            if (pe.th32ProcessID == pid) {
+                parentPid = pe.th32ParentProcessID;
+                break;
+            }
+        } while (Process32NextW(hSnap, &pe));
+    }
+
+    bool isService = false;
+    if (parentPid != 0 && Process32FirstW(hSnap, &pe)) {
+        do {
+            if (pe.th32ProcessID == parentPid) {
+                if (_wcsicmp(pe.szExeFile, SERVICE_EXE) == 0) {
+                    isService = true;
+                }
+                break;
+            }
+        } while (Process32NextW(hSnap, &pe));
+    }
+    CloseHandle(hSnap);
+    return isService;
+}
+
+void StopServiceViaRPC() {
+    RPC_WSTR szStringBinding = NULL;
+    RPC_BINDING_HANDLE hBinding = NULL;
+
+    RpcStringBindingComposeW(NULL, (RPC_WSTR)L"ncalrpc", NULL, (RPC_WSTR)L"AntivirusRpcEndpoint", NULL, &szStringBinding);
+    if (RpcBindingFromStringBindingW(szStringBinding, &hBinding) == RPC_S_OK) {
+        RpcTryExcept {
+            RpcStopAntivirusService(hBinding);
+        } RpcExcept(1) {
+        } RpcEndExcept;
+        RpcBindingFree(&hBinding);
+    }
+    RpcStringFreeW(&szStringBinding);
+}
+
 void AddTrayIcon(HWND hwnd) {
     NOTIFYICONDATA nid = { sizeof(nid) };
     nid.hWnd = hwnd;
     nid.uID = IDI_APPICON;
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_APP_TRAYMSG;
-    nid.hIcon = LoadIcon(NULL, IDI_APPLICATION); // Замените NULL на g_hInst, если добавите app.ico
+    nid.hIcon = LoadIcon(NULL, IDI_APPLICATION); 
     wcscpy_s(nid.szTip, szTitle);
     Shell_NotifyIcon(NIM_ADD, &nid);
 }
@@ -36,16 +121,13 @@ void ShowTrayMenu(HWND hwnd) {
     HMENU hMenu = LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_TRAYMENU));
     if (hMenu) {
         HMENU hSubMenu = GetSubMenu(hMenu, 0);
-        // SetForegroundWindow нужен, чтобы меню закрывалось при клике мимо него
         SetForegroundWindow(hwnd);
         TrackPopupMenu(hSubMenu, TPM_BOTTOMALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, NULL);
         DestroyMenu(hMenu);
     }
 }
 
-// Обработчик сообщений окна
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    // Восстановление иконки при падении/перезапуске explorer.exe
     if (message == g_uTaskbarRestart) {
         AddTrayIcon(hwnd);
         return 0;
@@ -57,8 +139,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         switch (wmId) {
         case ID_FILE_EXIT:
         case ID_TRAY_EXIT:
-            RemoveTrayIcon(hwnd);
-            PostQuitMessage(0); // Полное завершение работы
+            StopServiceViaRPC();
             break;
         case ID_TRAY_OPEN:
             ShowWindow(hwnd, SW_RESTORE);
@@ -68,17 +149,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return DefWindowProc(hwnd, message, wParam, lParam);
         }
     } break;
-
     case WM_CLOSE:
-        // При закрытии крестиком просто прячем окно, работа продолжается
         ShowWindow(hwnd, SW_HIDE);
         return 0; 
-
     case WM_DESTROY:
         RemoveTrayIcon(hwnd);
         PostQuitMessage(0);
         break;
-
     case WM_APP_TRAYMSG:
         switch (lParam) {
         case WM_LBUTTONUP:
@@ -90,7 +167,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
         }
         break;
-
     default:
         return DefWindowProc(hwnd, message, wParam, lParam);
     }
@@ -98,49 +174,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 }
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR lpCmdLine, _In_ int nCmdShow) {
-    // 10. Защита от повторного запуска (Мьютекс)
+    if (StartAntivirusService()) {
+        return 0; 
+    }
+
+    if (!IsParentService()) {
+        return 0; 
+    }
+
     HANDLE hMutex = CreateMutex(NULL, TRUE, L"Global\\MyTrayAppMutex_Unique_123");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        CloseHandle(hMutex);
-        return 0; // Молча завершаем работу до добавления иконки
-    }
-
-    g_hInst = hInstance;
-    g_uTaskbarRestart = RegisterWindowMessage(L"TaskbarCreated");
-
-    WNDCLASSEX wcex = { sizeof(WNDCLASSEX) };
-    wcex.style = CS_HREDRAW | CS_VREDRAW;
-    wcex.lpfnWndProc = WndProc;
-    wcex.hInstance = hInstance;
-    wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-    wcex.lpszMenuName = MAKEINTRESOURCE(IDR_MAINMENU);
-    wcex.lpszClassName = szWindowClass;
-    RegisterClassEx(&wcex);
-
-    g_hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, 0, 400, 300, nullptr, nullptr, hInstance, nullptr);
-
-    if (!g_hWnd) return FALSE;
-
-    // 7. Поддержка запуска в скрытом режиме (через аргумент -hidden)
-    bool startHidden = (wcsstr(lpCmdLine, L"-hidden") != nullptr || wcsstr(lpCmdLine, L"--hidden") != nullptr);
-    
-    if (!startHidden) {
-        ShowWindow(g_hWnd, nCmdShow);
-        UpdateWindow(g_hWnd);
-    }
-
-    // Добавляем иконку в трей при запуске
-    AddTrayIcon(g_hWnd);
-
-    // Цикл обработки сообщений
-    MSG msg;
-    while (GetMessage(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-
-    CloseHandle(hMutex);
-    return (int)msg.wParam;
-}
+        CloseHandle(h

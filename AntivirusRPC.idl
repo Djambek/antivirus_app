@@ -1,0 +1,10 @@
+[
+    uuid(4556509F-618A-46CE-9C8B-A35081E29F96),
+    version(1.0),
+    pointer_default(unique)
+]
+interface AntivirusRPC
+{
+    // Функция остановки службы. Используем явный binding handle
+    void RpcStopAntivirusService([in] handle_t Binding);
+}
